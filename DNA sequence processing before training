@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import numpy as np
+import gensim
+
+
+
+# import data
+__author__ = 'Jian Chen'
+
+# Import data
+# data = Fasta('./TEST/S12/seqs.fa')
+
+
+class DNAdata(object):
+    def __init__(self, data):
+        # extract label and sequences
+        self.Keys = sorted(data.keys())
+        self.len = len(self.Keys)
+        seq = []
+        label = []
+        seq_label = {}
+        for i in range(self.len):
+            seq_label[data[self.Keys[i]]] = self.Keys[i][8]
+            label.append(self.Keys[i][:9])
+            seq.append(data[self.Keys[i]])
+        self.label=label
+        self.seq=seq
+        self.classes=speciestable(self.label)
+
+    def minclass(self):
+        classes = speciestable(self.label)
+        # number of sequences in the minimum class
+        minclass = min(classes, key=classes.get)
+        minnumber = classes[minclass]
+        print('%s has the least number of sequences: %d\n' % (minclass, minnumber))
+        return minclass, minnumber
+
+    def equalize(self, minnumber):
+        index = list(i for i in range(len(self.label)))
+        start = 0
+        chosenind = np.array([])
+        classes=self.classes
+        for c in classes:
+            chosen = np.random.choice(index[start:start + classes[c]], minnumber, replace=False)
+            chosenind = np.append(chosenind, chosen)
+            start = start + classes[c]
+
+        chosenind = chosenind.astype(np.int64) # convert to int
+        label_eq = []
+        seq_eq = []
+        for ind in chosenind:
+            label_eq.append(self.label[ind])
+            seq_eq.append(self.seq[ind])
+        return seq_eq, label_eq
+
+
+class kmerVecModel(object):
+    def __init__(self, k, seq_train, dimension, leastshow=5):
+        sentence = []
+        for S in seq_train:
+            seq_k_mer = []
+            for i in range(len(seq_train[1]) - k + 1):
+                seq_k_mer.append(S[i:i + k])
+            sentence.append(seq_k_mer)
+        model = gensim.models.Word2Vec(sentence, size=dimension, min_count=leastshow)
+        self.model = model
+        self.vocab = model.wv.vocab
+
+
+class DNAsequence(object):
+    def __init__(self, Model, seq, label, k):
+        self.model = Model
+        self.seq = seq
+        self.label = label
+        self.k = k
+
+    def meanvec(self):
+        DNA_vec = []
+        for S in self.seq:
+            seq_vec = np.array([0 for i in range(self.model.layer1_size)])
+            num = 0
+            for i in range(len(self.seq[1]) - self.k + 1):
+                if S[i:i + self.k] in self.model.wv.vocab:
+                    num = num + 1
+                    seq_vec = seq_vec + np.array(self.model[S[i:i + self.k]])
+            seq_vec = seq_vec / num
+            DNA_vec.append(seq_vec)
+        return DNA_vec
+
+    def tfidfvec(self):
+        DNA_vec = []
+        idf_table = idf(self.seq, self.model.wv.vocab, self.k)
+        for S in self.seq:
+            seq_vec = [0 for i in range(self.model.layer1_size)]
+            num = 0
+            tf_table = termf(S, self.k)
+            for i in range(len(self.seq[1]) - self.k + 1):
+                if S[i:i + self.k] in self.model.wv.vocab:
+                    num = num + 1
+                    weight = tf_table[S[i:i + self.k]] / idf_table[S[i:i + self.k]]
+                    seq_vec = seq_vec + weight * np.array(self.model[S[i:i + self.k]])
+            seq_vec = seq_vec / num
+            DNA_vec.append(seq_vec)
+        return DNA_vec
+
+    def freqvec(self):
+        DNA_vec_table = {}
+        DNA_vec = []
+        for w in self.model.wv.vocab:
+            DNA_vec_table[w] = 0
+        for S in self.seq:
+            DNA_vec_temp = []
+            for i in range(len(self.seq[1]) - self.k + 1):
+                DNA_vec_table[S[i:i + self.k]] = DNA_vec_table[S[i:i + self.k]] + 1
+            for w in self.model.wv.vocab:
+                DNA_vec_temp.append(DNA_vec_table[w])
+            DNA_vec.append(DNA_vec_temp)
+        return np.array(DNA_vec)
+
+
+
+def unique(label):
+    # find number of unique labels in input label vector
+    unilabel=[]
+    for x in label:
+        if x not in unilabel:
+            unilabel.append(x)
+    return unilabel
+
+
+def speciestable(label):
+    # generate a table for numbers in different classes
+    classes={}
+    for x in label:
+        if x not in classes:
+            classes[x] = 0
+    for i in range(len(label)):
+        for c in classes:
+            if label[i] == c:
+                classes[c] = classes[c] + 1
+    return classes
+
+
+def termf(seq, k):
+    # term frequency of kmers in the seq
+    kmer_table=[]
+    for i in range(len(seq)-k+1):
+        kmer_table.append(seq[i:i+k])
+    tf_table = {}
+    for x in kmer_table:
+        if x not in tf_table:
+            tf_table[x] = 0
+    for i in range(len(kmer_table)):
+        for c in tf_table:
+            if kmer_table[i] == c:
+                tf_table[c] = tf_table[c] + 1
+
+    return tf_table
+
+
+def idf(seqs, vocab, k):
+    idf_table={}
+    for kmer in vocab:
+        idf_table[kmer] = 0
+    for S in seqs:
+        kmer_table = []
+        for i in range(len(S) - k + 1):
+            kmer_table.append(S[i:i + k])
+        for kmer in vocab:
+            if kmer in kmer_table:
+                idf_table[kmer] = idf_table[kmer]+1
+    return idf_table
+
+
+def equalize(seq, label, minnumber):
+    index = list(i for i in range(len(label)))
+    start = 0
+    chosenind = np.array([])
+    classes = speciestable(label)
+    for c in classes:
+        chosen = np.random.choice(index[start:start + classes[c]], minnumber, replace=False)
+        chosenind = np.append(chosenind, chosen)
+        start = start + classes[c]
+
+    chosenind = chosenind.astype(np.int64) # convert to int
+    label_eq = []
+    seq_eq = []
+    for ind in chosenind:
+        label_eq.append(label[ind])
+        seq_eq.append(seq[ind])
+    return seq_eq, label_eq
