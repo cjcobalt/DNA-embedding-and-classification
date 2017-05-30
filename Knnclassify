@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import DNAprocess as Dp
+import numpy as np
+from pyfasta import Fasta
+import tensorflow as tf
+from tensorflow.contrib.tensorboard.plugins import projector
+import pickle
+import selfKnn
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
+
+# import data and equalize number in classes
+data = Fasta('./TEST/S12/seqs.fa')
+DNA = Dp.DNAdata(data)
+seq_train_kmer, label_train_kmer = DNA.equalize(1000)
+
+# choose training and testing data
+index = list(i for i in range(len(label_train_kmer)))
+chosen = np.random.choice(index, round(0.8*len(label_train_kmer)), replace=False)
+unchosen = set(index)-set(chosen)
+print('\nAll data:', len(label_train_kmer), 'training data:', len(chosen), 'testing data: %d\n' % len(unchosen))
+label_train = []
+seq_train = []
+label_test = []
+seq_test = []
+for ind in index:
+    if ind in chosen:
+        label_train.append(label_train_kmer[ind])
+        seq_train.append(seq_train_kmer[ind])
+    else:
+        label_test.append(label_train_kmer[ind])
+        seq_test.append(seq_train_kmer[ind])
+trainable = Dp.speciestable(label_train)
+print('training data', trainable)
+testable = Dp.speciestable(label_test)
+print('testing data', testable)
+
+# label for training data
+label_vec=[]
+label_num = []
+for l in label_train:
+    label_num.append(int(l[8])+1)
+
+# label for testing data
+label_vec_test=[]
+label_num_test = []
+for l in label_test:
+    label_num_test.append(int(l[8])+1)
+
+k = 6
+VecModel = pickle.load(open('kmer_model/Model_100_10.pickle', 'rb'))
+print('\nEmbedded into 100 dimension')
+print('the number in vocabulary is %d\n' % (len(VecModel.wv.vocab)))
+
+
+# Generate DNA sequence Vector with 4 methods
+# training
+DNA_sequence_train = Dp.DNAsequence(VecModel, seq_train, label_train, k)
+DNA_vec_train = DNA_sequence_train.freqvec()
+print(len(DNA_vec_train))
+# testing
+DNA_sequence_test = Dp.DNAsequence(VecModel, seq_test, label_test, k)
+DNA_vec_test = DNA_sequence_test.freqvec()
+print(len(DNA_vec_test[1]))
+
+
+# Knn classify
+Model = selfKnn.KnnModel(DNA_vec_train, label_num, 10)
+label_output = Model.classify(DNA_vec_test)
+
+# Evaluation
+cost = 0
+for i in range(len(label_output)):
+    if label_num_test[i] != label_output[i]:
+        cost = cost + 1
+print('accuracy is %f' % (1-cost/len(label_num)))
+
+# Visualization of embedding
+with tf.Session() as sess:
+    # Step 10 create a log writer. run 'tensorboard --logdir=./logs/nn_logs'
+    writer = tf.summary.FileWriter("logs/Knn_logs", sess.graph) # for 0.8
+    merged = tf.summary.merge_all()
+
+    # Step 11 you need to initialize all variables
+    tf.global_variables_initializer().run()
+
+LOG_DIR = './logs/Knn_logs'
+print('doing embedding')
+DNA_vec = np.array(DNA_vec_test)
+
+# Generate meta data
+np.savetxt(os.getcwd() + '/logs/Knn_logs/metadata_Knn.tsv', label_num_test, fmt='%d')
+embed_vec = tf.Variable(DNA_vec, name='embedding')
+
+with tf.Session() as sess:
+    saver = tf.train.Saver([embed_vec])
+    sess.run(embed_vec.initializer)
+    saver.save(sess, os.path.join(LOG_DIR, 'embed_vec.ckpt'))
+
+    config = projector.ProjectorConfig()
+    # One can add multiple embeddings.
+    embedding = config.embeddings.add()
+    embedding.tensor_name = embed_vec.name
+    # Link this tensor to its metadata file (e.g. labels).
+    embedding.metadata_path = os.getcwd()+'/logs/Knn_logs/metadata_Knn.tsv'
+    # Saves a config file that TensorBoard will read during startup.
+    projector.visualize_embeddings(tf.summary.FileWriter(LOG_DIR), config)
+print('Done. Embedded.')

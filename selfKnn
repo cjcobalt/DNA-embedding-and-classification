@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import numpy as np
+from collections import Counter
+
+class KnnModel(object):
+    def __init__(self, vec_train, label_train_num, k):
+        self.k = k
+        self.train_v = vec_train
+        self.train_l = label_train_num
+        table = {}
+        for i in range(len(label_train_num)):
+            table[i] = label_train_num[i]
+        self.table = table
+
+    def classify(self, vec_test):
+        label_output = []
+        for vts in vec_test:
+            distance = []
+            distance_table = {}
+            for i in range(len(self.train_v)):
+                distance.append(np.linalg.norm(vts-self.train_v[i]))
+                distance_table[i] = np.linalg.norm(vts-self.train_v[i])
+            neighbours = sort_by_value(distance_table)
+            kneighbours = neighbours[0:self.k]
+            klabels = []
+            for ind in kneighbours:
+                klabels.append(self.table[ind])
+            label_output.append(Counter(klabels).most_common(1)[0][0])
+        return label_output
+
+
+
+def sort_by_value(table):
+    items = table.items()
+    backitems = [[v[1],v[0]] for v in items]
+    backitems.sort()
+    return [ backitems[i][1] for i in range(0,len(backitems))]
+
